@@ -1,0 +1,251 @@
+global Inst {
+  const IM =      8b1;
+  const STORESP = 8b010;           // Pop and store to stack with offset
+  const LOADSP =  8b011;           // Push value present on stack with offset
+  const ADDSP =   8b0001;          // Add value present on stack with offset to TOS
+  const EMULATE = 8b001;           // Emulate instruction
+  const BRK =     8b00000000;      // Break
+  const POPPC =   8b00000100;      // Pop current value and set program counter
+  const LOAD =    8b00001000;      // Pop current value and push memory value
+  const STORE =   8b00001100;      // Store NOS into memory pointed by TOS; pop both
+  const PUSHSP =  8b00000010;      // Push current stack pointer
+  const POPSP =   8b00001101;      // Pop and store into stack pointer
+  const ADD =     8b00000101;      // Integer addition
+  const AND =     8b00000110;      // Bitwise AND
+  const OR =      8b00000111;      // Bitwise OR
+  const NOT =     8b00001001;      // Bitwise NOT
+  const FLIP =    8b00001010;      // Flip bits
+  const NOP =     8b00001011;      // No operation
+}
+
+// TODO: Parameterization of 32-bit bus would need alignment work,
+//       as STORE op currently assumes 32-bit alignment.
+module zpu_cpu #(
+  DATA_BUS_SIZE = 32 : DATA_BUS_SIZE > 0,
+  ADDRESS_BUS_SIZE = 32 : ADDRESS_BUS_SIZE > 0
+  )(
+    input clk,                          // clock
+    input rst,                          // reset
+    output read,                        // CPU read request
+    output write,                       // CPU write request
+    output address[ADDRESS_BUS_SIZE],   // Read/write address
+    output dout[DATA_BUS_SIZE],         // write data
+    input din[DATA_BUS_SIZE],            // read data
+    output pc_out[ADDRESS_BUS_SIZE],
+    output sp_out[DATA_BUS_SIZE],
+    output op_out[8]
+  ) {
+  
+  .clk(clk), .rst(rst) {
+    // dff idim_flag;
+    stack stack(#WIDTH(DATA_BUS_SIZE), #DEPTH(64));
+    dff pc[ADDRESS_BUS_SIZE](#INIT(0));
+    fsm alu_state = {GET_OP1, OP1, GET_OP2, OP2, PUSH_RESULT};
+    fsm im_state = {START, OLD_IM, PUSH_RESULT};
+    fsm store_state = {GET_ADDRESS, ADDRESS, GET_VAL, VAL};
+    fsm load_state = {GET_ADDRESS, ADDRESS, LOAD};
+    fsm popsp_state = {GET_SP, SP, SET};
+    fsm poppc_state = {GET_PC, PC};
+    fsm loadsp_state = {GET_SP, SP};
+    fsm storesp_state = {GET_SP_REL, SP_REL};
+    dff append_immediate;
+    alu alu(#WIDTH(DATA_BUS_SIZE));
+    dff temp[DATA_BUS_SIZE](#INIT(0));
+  }
+  
+  instRom rom;
+  
+  sig opcode[8];
+  
+  always {
+    //
+    sp_out = stack.stack_pointer;
+    pc_out = pc.q;
+    //
+    read = 0;                              // Don't read
+    write = 0;                             // Don't write
+    address = 8hxx;                        // Don't care
+    dout = DATA_BUS_SIZEx{1bx};            // Don't care
+    rom.address = pc.q;                    // Feed current program counter to ROM address selector
+    opcode = rom.inst;                     // Fetch next instruction
+    alu.opcode = opcode;                   // Wire the alu opcode
+    alu.op1 = DATA_BUS_SIZEx{1bx};         // Don't care
+    alu.op2 = DATA_BUS_SIZEx{1bx};         // Don't care
+    alu.op1_rdy = 0;                       // Load op1 not ready
+    alu.op2_rdy = 0;                       // Load op2 not ready
+    stack.push_rdy = 0;                    // Push data not ready
+    stack.push_data = DATA_BUS_SIZEx{1bx}; // Don't care
+    stack.pop = 0;                         // Don't pop until ready
+    stack.offset = 0;                      // Stack offset to zero
+    stack.sp_rdy = 0;                      // Set stack pointer not ready
+    stack.new_sp = DATA_BUS_SIZEx{1bx};    // Don't care
+    append_immediate.d = 0;                // Immediate flag always reset
+    temp.d = temp.q;
+
+    op_out = opcode;
+
+        
+    if (opcode[7] == Inst.IM) {
+      // The push or append immediate instruction
+      // Value obtained from 7 LSB of opcode
+      case (im_state.q) {
+        im_state.START:
+          if (append_immediate.q) {                 // Do an append immediate
+            stack.offset = 0;                       // Request TOS
+            im_state.d = im_state.OLD_IM;           // Advance state machine
+          } else {                                  // Do a push immediate
+            // 7-bit integer is the 7 LSB of immediate opcode
+            stack.push_data = $signed(opcode[6:0]); // Treat as twos-compliment integer
+            stack.push_rdy = 1;                     // Signal ready to push
+            pc.d = pc.q + 1;                        // Advance program counter
+            im_state.d = im_state.START;            // Reset state machine
+          }
+        im_state.OLD_IM:
+          temp.d = opcode[6:0]                      // Shift old im value left 7 and or in 7 LSB opcode
+              | stack.data << 7;
+          stack.pop = 1;                            // Pop old immediate value off of stack
+          im_state.d = im_state.PUSH_RESULT;        // Advance state machine
+        im_state.PUSH_RESULT:                       // Push new immediate value to stack
+          stack.push_data = temp.q;                 // Set new temp immediate to push back
+          stack.push_rdy = 1;                       // Push is ready
+          pc.d = pc.q + 1;                          // Advance program counter
+          im_state.d = im_state.START;              // Reset state machine
+      }
+      append_immediate.d = 1;                       // Set append flag in case next inst is IM
+    }
+
+    // Push relative SP value on to TOS
+    // Relative position contained in 5 LSB of opcode
+    if (opcode[7:5] == Inst.LOADSP) {
+      case (loadsp_state.q) {
+        loadsp_state.GET_SP:                    // Begin alu instruction; request operand 1 fetch
+          stack.offset =                        // Get SP at relative position
+            c{~opcode[4], opcode[3:0]};             // MSB inverted per docs
+          loadsp_state.d = loadsp_state.SP;     // Advance state machine
+        loadsp_state.SP:
+          stack.push_data = stack.data;         // Set relative fetched stack pointer
+          stack.push_rdy = 1;                   // Ready to push
+          pc.d = pc.q + 1;                      // Advance program counter
+          loadsp_state.d = loadsp_state.GET_SP; // Reset state machine
+    }
+      
+    if (opcode[7:5] == Inst.STORESP) {
+      
+    }
+        
+    // An ALU instruction
+    if (opcode == Inst.ADD ||
+        opcode == Inst.AND ||
+        opcode == Inst.OR ||
+        opcode == Inst.NOT ||
+        opcode == Inst.FLIP) {
+      case (alu_state.q) {
+        alu_state.GET_OP1:                      // Begin alu instruction; request operand 1 fetch
+          stack.offset = 0;                     // Get TOS
+          alu_state.d = alu_state.OP1;          // Advance state machine
+        alu_state.OP1:                          // Load operand 1
+          alu.op1 = stack.data;                 // Assign operand 1 to alu
+          alu.op1_rdy = 1;                      // Load op1 ready
+          stack.pop = 1;                        // Pop first operand off stack
+          if (alu_state.q == Inst.NOT ||        // If a 1 operand kind of alu operation
+              alu_state.q == Inst.FLIP) {
+            alu_state.d = alu_state.PUSH_RESULT;// Advance state machine to push result
+          } else {
+            alu_state.d = alu_state.GET_OP2;    // Advance state machine to get operand 2
+          }
+        alu_state.GET_OP2:                      // Request operand 2 fetch
+          stack.offset = 0;                     // Get TOS
+          alu_state.d = alu_state.OP2;          // Advance state machine
+        alu_state.OP2:                          // Load operand 2
+          alu.op2 = stack.data;                 // Assign operand 2 to alu
+          alu.op2_rdy = 1;                      // Load op2 ready
+          stack.pop = 1;                        // Pop second operand off stack
+          alu_state.d = alu_state.PUSH_RESULT;  // Advance program counter
+        alu_state.PUSH_RESULT:                  // Push alu result on to stack
+          stack.push_data = alu.out;            // Assign result to push back to stack
+          stack.push_rdy = 1;                   // Push data is ready
+          pc.d = pc.q + 1;                      // Advance program counter
+          alu_state.d = alu_state.GET_OP1;      // Reset state machine
+      }
+    }
+      
+    case(opcode) {
+      Inst.NOP:
+        // No operation instruction
+        pc.d = pc.q + 1;                          // Nothing to do; find something to do
+      Inst.BRK:
+        // Break instruction
+        pc.d = pc.q + 0;                          // Nothing to do; be happy forever
+      Inst.STORE:
+        // Store 32-bit value to memory instruction
+        case (store_state.q) {
+          store_state.GET_ADDRESS:
+            stack.offset = 0;                     // Get address from TOS
+            store_state.d = store_state.ADDRESS;  // Advance state machine
+          store_state.ADDRESS:
+            temp.d = stack.data;                  // Assign address fetched from TOS, 32-bit aligned
+            stack.pop = 1;                        // Pop address off of stack
+            store_state.d = store_state.GET_VAL;  // Advance state machine
+          store_state.GET_VAL:                    
+            stack.offset = 0;                     // Get data value from TOS
+            store_state.d = store_state.VAL;      // Advance state machine
+          store_state.VAL:
+            address = temp.q;                     // Assign address fetched from stack, referenced in 4 byte words
+            dout = stack.data;                    // Assign data fetched from store_state
+            write = 1;                            // Signal we want to write to memory
+            stack.pop = 1;                        // Pop data off of stack
+            pc.d = pc.q + 1;                      // Advance program counter
+            store_state.d = store_state.GET_ADDRESS;// Reset state machine
+        }
+      Inst.LOAD:
+        // Load memory value, address of which on TOS, on to TOS
+        case (load_state.q) {
+          load_state.GET_ADDRESS:
+            stack.offset = 0;                     // Get address from TOS
+            load_state.d = load_state.ADDRESS;    // Advance state machine
+          load_state.ADDRESS:
+            address = stack.data;                 // Assign address fetched from TOS, 32-bit aligned
+            read = 1;                             // Indicate cpu wants to read          
+            stack.pop = 1;                        // Pop address off of stack
+            load_state.d = load_state.LOAD;       // Advance state machine
+          load_state.LOAD:
+            stack.push_data = din;                // Din should contain value to push
+            stack.push_rdy = 1;                   // Push is ready
+            pc.d = pc.q + 1;                      // Advance program counter
+            load_state.d = load_state.GET_ADDRESS;// Reset state machine  
+        }
+      Inst.PUSHSP:
+        // Push the stack pointer instruction
+        stack.push_data = stack.stack_pointer;
+        stack.push_rdy = 1;
+        pc.d = pc.q + 1;
+      Inst.POPSP:
+        // Pop the stack pointer and set it
+        case (popsp_state.q) {
+          popsp_state.GET_SP:
+            stack.offset = 0;                     // Get stack pointer from TOS
+            popsp_state.d = popsp_state.SP;       // Advance state machine
+          popsp_state.SP:
+            temp.d = stack.data;                  // Hold on to new stack pointer
+            stack.pop = 1;                        // Pop it off the stack
+            popsp_state.d = popsp_state.SET;     // Advance state machine
+          popsp_state.SET:
+            stack.new_sp = temp.q;                // Set the new stack pointer
+            stack.sp_rdy = 1;                     // It is ready to set
+            pc.d = pc.q + 1;                      // Advance program counter
+            popsp_state.d = popsp_state.GET_SP;   // Reset state machine
+        }
+      Inst.POPPC:
+        // Pop the program counter and set it (jump instruction)
+        case (poppc_state.q) {
+          poppc_state.GET_PC:
+            stack.offset = 0;                     // Get program counter from TOS
+            poppc_state.d = poppc_state.PC;       // Advance state machine
+          poppc_state.PC:
+            stack.pop = 1;                        // Pop it off the stack
+            pc.d = stack.data;                    // Set new program counter
+            poppc_state.d = poppc_state.GET_PC;   // Reset state machine
+        }
+    }
+  }
+}

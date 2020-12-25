@@ -1,0 +1,49 @@
+module alu #(
+    WIDTH = 32 : WIDTH > 0     // Width of each operand
+  )(
+    input clk,                 // an input clock signal
+    input rst,                 // global reset
+    input op1[WIDTH],          // Operand 1
+    input op1_rdy,             // Load operand 1
+    input op2[WIDTH],          // Operand 2
+    input op2_rdy,             // Load operand 2
+    input opcode[8],           // The ZPU opcode of the operation
+    output out[WIDTH]          // The result
+  ) {
+
+  .clk(clk), .rst(rst) {
+    dff op1_reg[WIDTH](#INIT(0));    // Register to hold operand 1
+    dff op2_reg[WIDTH](#INIT(0));    // Register to hold operand 2
+  }
+  
+  var i;                             // Index for the flip bit loop
+  
+  always {
+    if (op1_rdy) {                   // Ready to load operand 1?
+      op1_reg.d = op1;               // Load operand 1
+    }
+    if (op2_rdy) {                   // Ready to load operand 2?
+      op2_reg.d = op2;               // Load operand 2
+    }
+    case (opcode) {
+      Inst.ADD:
+        out = op1_reg.q + op2_reg.q;
+      Inst.AND:
+        out = op1_reg.q & op2_reg.q;
+      Inst.OR:
+        out = op1_reg.q | op2_reg.q;
+      Inst.NOT:                       // Invert the bits in operand 1; operand 2 ignored
+        out = ~op1_reg.q;
+      Inst.FLIP:                      // Reverse the bits in operand 1; operand 2 ignored
+        for (i = 0; i < WIDTH; i++) {
+          if (op1_reg.q[i]) {
+            out[WIDTH - 1 - i] = 1;
+          } else {
+            out[WIDTH - 1 - i] = 0;
+          }
+        }
+      default:
+        out = WIDTHx{1bx};            // Don't care
+    }
+  }
+}

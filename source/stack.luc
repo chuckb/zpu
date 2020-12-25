@@ -1,0 +1,74 @@
+module stack #(
+    WIDTH = 32 : WIDTH > 0, // width of each entry in the stack
+    DEPTH = 32 : DEPTH > 0  // how many entries can be in the stack
+  )(
+    input clk,                                // clock
+    input rst,                                // reset
+    input push_data[WIDTH],                   // Data to push on to TOS
+    input push_rdy,                           // Signal push data is ready
+    output data[WIDTH],                       // Data on stack at offset
+    input offset[$clog2(DEPTH)],              // Offset to get data on stack (0=TOS; requires 1 clk)
+    output offset_fault,                      // High if an invalid offset is requested
+    input pop,                                // Pop value from TOS at next clock
+    output empty,                             // High if stack is empty
+    output full,                              // High if stack is full
+    output stack_pointer[$clog2(DEPTH)],      // The current stack stack pointer
+    input new_sp[$clog2(DEPTH)],              // New stack pointer to set
+    input sp_rdy                              // Signal new stack pointer can be set
+  ) {
+
+  const SP_SIZE = $clog2(DEPTH);                      // bits required to store DEPTH - 1
+  
+  .clk(clk) {
+    simple_ram stack(#SIZE(WIDTH), #DEPTH(DEPTH));    // RAM to hold the stack
+    .rst(rst) {
+      dff sp[SP_SIZE](#INIT(WIDTHx{1b0}));            // Stack pointer to hold current stack position
+    }
+  }
+  
+  always {
+    stack_pointer = sp.q;                // Send out the current stack pointer
+    
+    // Defaults
+    stack.write_data = WIDTHx{1bx};      // Not writing, don't care 
+    stack.write_en = 0;                  // Not writing
+    offset_fault = 0;                    // No offset fault
+    stack.address = SP_SIZEx{1bx};       // Default ram address to don't care
+    data = WIDTHx{1bx};                  // Default data to don't care
+    
+    if (sp_rdy) {                        // If new stack pointer requested
+      if (new_sp < DEPTH) {              // If new sp is within range
+        sp.d = new_sp;                   // Set the new sp
+      } else {                           // New SP not in range
+        offset_fault = 1;                // Set offset fault
+      }
+    }
+    
+    if (|sp.q) {                         // Stack pointer non-zero?
+      empty = 0;                         // Yes, so stack not empty
+      if (offset < sp.q) {               // Can we get the requested offset?
+        stack.address = sp.q - 1 - offset; // Yes, so data is value at TOS or offset if set
+      } else {                           // No, cannot get requested offset
+        offset_fault = 1;                // Set an offset fault
+      }
+      data = stack.read_data;            // Assign data for next clock tick
+      if (pop) {                         // Popping?
+        sp.d = sp.q - 1;                 // Yes, so decrement the stack pointer
+      }
+    } else {
+      empty = 1;                         // No, so stack is empty
+    }
+
+    if (&sp.q) {                         // Stack pointer all 1s?
+      full = 1;                          // Yes, stack is full
+    } else {
+      full = 0;                          // No, stack is not full
+      if (push_rdy) {                    // Wanna push?
+        stack.address = sp.q;            // Set the address to TOS    
+        stack.write_data = push_data;    // Assign data to push
+        stack.write_en = 1;              // Enable writing
+        sp.d = sp.q + 1;                 // Advance the stack pointer
+      }
+    }
+  }            
+}

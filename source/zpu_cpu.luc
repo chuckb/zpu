@@ -47,7 +47,7 @@ module zpu_cpu #(
     fsm popsp_state = {GET_SP, SP, SET};
     fsm poppc_state = {GET_PC, PC};
     fsm loadsp_state = {GET_SP, SP};
-    fsm storesp_state = {GET_SP_REL, SP_REL};
+    fsm storesp_state = {GET_SP_REL, SP_REL, WRITE};
     dff append_immediate;
     alu alu(#WIDTH(DATA_BUS_SIZE));
     dff temp[DATA_BUS_SIZE](#INIT(0));
@@ -79,12 +79,15 @@ module zpu_cpu #(
     stack.offset = 0;                      // Stack offset to zero
     stack.sp_rdy = 0;                      // Set stack pointer not ready
     stack.new_sp = DATA_BUS_SIZEx{1bx};    // Don't care
+    stack.write_data = DATA_BUS_SIZEx{1bx};// Don't care
+    stack.write_offset = 0;                // Write data offset to zero
+    stack.write_rdy = 0;                   // Not writing
     append_immediate.d = 0;                // Immediate flag always reset
     temp.d = temp.q;
 
     op_out = opcode;
 
-        
+    // 1-bit opcode
     if (opcode[7] == Inst.IM) {
       // The push or append immediate instruction
       // Value obtained from 7 LSB of opcode
@@ -114,26 +117,44 @@ module zpu_cpu #(
       append_immediate.d = 1;                       // Set append flag in case next inst is IM
     }
 
-    // Push relative SP value on to TOS
-    // Relative position contained in 5 LSB of opcode
-    if (opcode[7:5] == Inst.LOADSP) {
-      case (loadsp_state.q) {
-        loadsp_state.GET_SP:                    // Begin alu instruction; request operand 1 fetch
-          stack.offset =                        // Get SP at relative position
-            c{~opcode[4], opcode[3:0]};             // MSB inverted per docs
-          loadsp_state.d = loadsp_state.SP;     // Advance state machine
-        loadsp_state.SP:
-          stack.push_data = stack.data;         // Set relative fetched stack pointer
-          stack.push_rdy = 1;                   // Ready to push
-          pc.d = pc.q + 1;                      // Advance program counter
-          loadsp_state.d = loadsp_state.GET_SP; // Reset state machine
+    // 3-bit opcodes
+    case (opcode[7:5]) {
+      Inst.LOADSP:
+        // Push relative SP value on to TOS
+        // Relative position contained in 5 LSB of opcode
+        case (loadsp_state.q) {
+          loadsp_state.GET_SP:                    // Begin alu instruction; request operand 1 fetch
+            stack.offset =                        // Get SP at relative position
+              c{~opcode[4], opcode[3:0]};             // MSB inverted per docs
+            loadsp_state.d = loadsp_state.SP;     // Advance state machine
+          loadsp_state.SP:
+            stack.push_data = stack.data;         // Set relative fetched stack pointer
+            stack.push_rdy = 1;                   // Ready to push
+            pc.d = pc.q + 1;                      // Advance program counter
+            loadsp_state.d = loadsp_state.GET_SP; // Reset state machine
+        }
+      Inst.STORESP:
+        // Write value at TOS to SP-relative position
+        // SP relative position in 5 LSB of opcode
+        case (storesp_state.q) {
+          storesp_state.GET_SP_REL:
+            stack.offset = 0;                     // Get TOS
+            storesp_state.d = storesp_state.SP_REL;// Advance state machine
+          storesp_state.SP_REL:
+            temp.d = stack.data;                  // Save off data at TOS to write to relative location
+            stack.pop = 1;                        // Pop it off stack
+            storesp_state.d = storesp_state.WRITE;// Advance state machine
+          storesp_state.WRITE:
+            stack.write_data = temp.q;            // Write saved data at TOS to relative stack location
+            stack.write_offset =                  // Set relative position to stack pointer optained from opcode
+              c{~opcode[4], opcode[3:0]};           // MSB inverted per docs
+            stack.write_rdy = 1;                  // Write is ready
+            pc.d = pc.q + 1;                      // Advance program counter
+            storesp_state.d = storesp_state.GET_SP_REL;//Reset state machine          
+        }              
     }
-      
-    if (opcode[7:5] == Inst.STORESP) {
-      
-    }
-        
-    // An ALU instruction
+    
+    // All ALU instructions
     if (opcode == Inst.ADD ||
         opcode == Inst.AND ||
         opcode == Inst.OR ||
@@ -168,7 +189,8 @@ module zpu_cpu #(
           alu_state.d = alu_state.GET_OP1;      // Reset state machine
       }
     }
-      
+
+    // 8-bit opcodes
     case(opcode) {
       Inst.NOP:
         // No operation instruction

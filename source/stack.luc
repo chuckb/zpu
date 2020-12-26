@@ -14,7 +14,10 @@ module stack #(
     output full,                              // High if stack is full
     output stack_pointer[$clog2(DEPTH)],      // The current stack stack pointer
     input new_sp[$clog2(DEPTH)],              // New stack pointer to set
-    input sp_rdy                              // Signal new stack pointer can be set
+    input sp_rdy,                             // Signal new stack pointer can be set
+    input write_data[WIDTH],                  // Data to overwrite at a write_offset on stack
+    input write_offset[$clog2(DEPTH)],        // Write offset to overwrite stack data (0 = TOS)
+    input write_rdy                           // Signal write data is ready
   ) {
 
   const SP_SIZE = $clog2(DEPTH);                      // bits required to store DEPTH - 1
@@ -68,6 +71,17 @@ module stack #(
         stack.write_data = push_data;    // Assign data to push
         stack.write_en = 1;              // Enable writing
         sp.d = sp.q + 1;                 // Advance the stack pointer
+      }
+    }
+    
+    if (write_rdy) {                     // If ready to overwrite data on stack
+      if (write_offset < sp.q) {         // Is the write offset within the stack?
+        stack.address = sp.q - 1 - offset;// Set address to stack data value at offset
+                                          // SP always points to empty slot ahead of TOS
+        stack.write_data = write_data;   // Set data to write_data
+        stack.write_en = 1;              // Enable writing; do not advance sp
+      } else {
+        offset_fault = 1;                // No, so indiacte a fault
       }
     }
   }            

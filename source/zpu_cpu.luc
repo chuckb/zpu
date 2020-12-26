@@ -1,9 +1,9 @@
 global Inst {
-  const IM =      8b1;
-  const STORESP = 8b010;           // Pop and store to stack with offset
-  const LOADSP =  8b011;           // Push value present on stack with offset
-  const ADDSP =   8b0001;          // Add value present on stack with offset to TOS
-  const EMULATE = 8b001;           // Emulate instruction
+  const IM =      1b1;
+  const STORESP = 3b010;           // Pop and store to stack with offset
+  const LOADSP =  3b011;           // Push value present on stack with offset
+  const ADDSP =   4b0001;          // Add value present on stack with offset to TOS
+  const EMULATE = 3b001;           // Emulate instruction
   const BRK =     8b00000000;      // Break
   const POPPC =   8b00000100;      // Pop current value and set program counter
   const LOAD =    8b00001000;      // Pop current value and push memory value
@@ -48,6 +48,7 @@ module zpu_cpu #(
     fsm poppc_state = {GET_PC, PC};
     fsm loadsp_state = {GET_SP, SP};
     fsm storesp_state = {GET_SP_REL, SP_REL, WRITE};
+    fsm addsp_state = {GET_TOS, TOS, GET_REL, REL, ADD, PUSH};
     dff append_immediate;
     alu alu(#WIDTH(DATA_BUS_SIZE));
     dff temp[DATA_BUS_SIZE](#INIT(0));
@@ -152,6 +153,34 @@ module zpu_cpu #(
             pc.d = pc.q + 1;                      // Advance program counter
             storesp_state.d = storesp_state.GET_SP_REL;//Reset state machine          
         }              
+    }
+    
+    // 4-bit opccodes
+    case (opcode[7:4]) {
+      Inst.ADDSP:
+        // Add SP-relative value to top of stack
+        case(addsp_state.q) {
+          addsp_state.GET_TOS:
+            stack.offset = 0;                     // Get TOS
+            addsp_state.d = addsp_state.TOS;      // Advance state machine
+          addsp_state.TOS:
+            alu.op1 = stack.data;                 // Save off data at TOS to alu
+            alu.op1_rdy = 1;                      // Signal alu op1 ready to load
+            stack.pop = 1;                        // Pop value off stack
+            addsp_state.d = addsp_state.GET_REL;  // Advance state machine
+          addsp_state.GET_REL:
+            stack.offset = opcode[3:0];           // SP rel location 4 LSB of opcode
+            addsp_state.d = addsp_state.ADD;      // Advance state machine
+          addsp_state.ADD:
+            alu.op2 = stack.data;                 // Save off data at sp rel location to alu
+            alu.op2_rdy = 1;                      // Signal alu op2 ready to load
+            addsp_state.d = addsp_state.PUSH;     // Advance state machine
+          addsp_state.PUSH:
+            stack.push_data = alu.out;            // Set sum to push to TOS
+            stack.push_rdy = 1;                   // Signal push ready
+            pc.d = pc.q + 1;                      // Advance program counter
+            addsp_state.d = addsp_state.GET_TOS;  // Reset state machine
+        }
     }
     
     // All ALU instructions

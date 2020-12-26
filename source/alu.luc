@@ -45,5 +45,9 @@ module alu #(
       default:
         out = WIDTHx{1bx};            // Don't care
     }
+    
+    if (opcode[7:4] == Inst.ADDSP) {  // The ADDSP instruction (4 MSB) adds two operands together too...
+      out = op1_reg.q + op2_reg.q;
+    }
   }
 }

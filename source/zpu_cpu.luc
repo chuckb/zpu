@@ -49,6 +49,7 @@ module zpu_cpu #(
     fsm loadsp_state = {GET_SP, SP};
     fsm storesp_state = {GET_SP_REL, SP_REL, WRITE};
     fsm addsp_state = {GET_TOS, TOS, GET_REL, REL, ADD, PUSH};
+    fsm emulate_state = {PUSH_PC, SET_PC};
     dff append_immediate;
     alu alu(#WIDTH(DATA_BUS_SIZE));
     dff temp[DATA_BUS_SIZE](#INIT(0));
@@ -152,6 +153,17 @@ module zpu_cpu #(
             stack.write_rdy = 1;                  // Write is ready
             pc.d = pc.q + 1;                      // Advance program counter
             storesp_state.d = storesp_state.GET_SP_REL;//Reset state machine          
+        }
+      Inst.EMULATE:
+        // Emulate instruction
+        case (emulate_state.q) {
+          emulate_state.PUSH_PC:
+            stack.push_data = pc.q + 1;             // Push next instruction on to TOS
+            stack.push_rdy = 1;                     // Signal push ready
+            emulate_state.d = emulate_state.SET_PC; // Advance state machine
+          emulate_state.SET_PC:
+            pc.d = (opcode[4:0] & 5h1f) << 5;       // 5 LSB opcode - 32 * 32 is location of emulated instruction
+            emulate_state.d = emulate_state.PUSH_PC;// Reset state machine
         }              
     }
     

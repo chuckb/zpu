@@ -55,7 +55,7 @@ module zpu_cpu #(
     dff temp[DATA_BUS_SIZE](#INIT(0));
   }
   
-  instRom rom;
+  loadspROM rom;
   
   sig opcode[8];
   

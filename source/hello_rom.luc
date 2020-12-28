@@ -1,0 +1,84 @@
+module hello_rom (
+    input address[8],
+    output inst[8]
+  ) {
+
+  always {
+    inst = Inst.NOP;
+    
+    // Make main board LEDs flash
+
+    /*
+    #define LED *(volatile unsigned int *)(128)
+    
+    int main(int argc,char *argv)
+    {
+      int c=0;
+      while(1) {
+        while(c < 1000000) {
+          c++;
+        }
+        c = 0;
+        LED=~LED;
+      }
+      return(0);
+    }
+    */    
+        
+    case (address) {
+      // main
+      0: inst = c{1, 0, 0, 0, 0, 0, 0, 0};      // im 0
+      1: inst = c{Inst.EMULATE, 0, 0, 0, 0, 0};  // emulate 61    ; pushspadd 
+    
+      // neqbranch
+      768: inst = c{Inst.LOADSP, 0, 1, 0, 0, 0};  // loadsp 8
+      769: inst = Inst.NOT;                       //             ; neq
+      770: inst = c{Inst.LOADSP, 0, 0, 0, 0, 0};  // loadsp 0
+      771: inst = c{1, 0, 0, 0, 0, 0, 0, 1};      // im 1
+      772: inst = Inst.ADD;
+      773: inst = Inst.NOT;
+      774: inst = Inst.AND;
+      775: inst = Inst.FLIP;
+      776: inst = Inst.NOT;
+      777: inst = c{1, 0, 0, 0, 0, 0, 0, 1};      // im 1
+      778: inst = Inst.AND;
+      779: inst = c{1, 1, 1, 1, 1, 1, 1, 1};      // im -1       ; mask
+      780: inst = Inst.ADD;
+      781: inst = c{Inst.LOADSP, 0, 0, 0, 0, 0};  // loadsp 0
+      782: inst = c{Inst.STORESP, 1, 0, 0, 0, 0}; // storesp 16
+      783: inst = c{Inst.LOADSP, 0, 0, 1, 0, 0};  // loadsp 4    ; no branch address
+      784: inst = Inst.AND;
+      785: inst = c{Inst.LOADSP, 0, 1, 1, 0, 0};  // loadsp 12   ; fetch boolean & neg mask
+      786: inst = Inst.NOT;
+      787: inst = c{Inst.LOADSP, 0, 1, 0, 0, 0};  // loadsp 8    ; calc address & mask for branch
+      788: inst = c{Inst.LOADSP, 1, 0, 0, 0, 0};  // loadsp 16
+      789: inst = Inst.ADD;
+      790: inst = c{1, 1, 1, 1, 1, 1, 1, 1};      // im -1       ; find address of branch instruction
+      791: inst = Inst.ADD;
+      792: inst = Inst.AND;
+      793: inst = Inst.OR;
+      794: inst = c{Inst.STORESP, 0, 0, 1, 0, 0}; // storesp 4
+      795: inst = c{Inst.STORESP, 0, 0, 1, 0, 0}; // storesp 4
+      796: inst = c{Inst.STORESP, 0, 0, 1, 0, 0}; // storesp 4
+      797: inst = Inst.POPPC;
+
+      // poppcrel
+      800: inst = Inst.ADD;
+      801: inst = c{1, 1, 1, 1, 1, 1, 1, 1};      // im -1        ; address of poppcrel
+      802: inst = Inst.ADD;
+      803: inst = Inst.POPPC;
+      
+      // pushspadd
+      928: inst = Inst.PUSHSP;
+      929: inst = c{1, 0, 0, 0, 0, 1, 0, 0};      // im 4
+      930: inst = Inst.ADD;
+      931: inst = c{Inst.LOADSP, 0, 1, 0, 0, 0};  // loadsp 8
+      932: inst = c{Inst.ADDSP, 0, 0, 0, 0};      // addsp 0
+      933: inst = c{Inst.ADDSP, 0, 0, 0, 0};      // addsp 0
+      934: inst = Inst.ADD;
+      935: inst = c{Inst.STORESP, 0, 1, 0, 0, 0}; // storesp 8
+      936: inst = Inst.POPPC;
+      
+    }
+  }
+}

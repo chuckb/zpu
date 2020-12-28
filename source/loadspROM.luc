@@ -1,0 +1,23 @@
+/*
+; Test loadsp instruction
+; All leds should be on and two items on stack
+begin:
+        im 127          ; Load all 1s {127}
+        nop
+        im 0            ; Load all 0s {127, 0}
+        loadsp 4
+        im 128          ; Write first stack value, 127, to output LEDS at loc 128
+        store           ; Write it
+        breakpoint      ; Stop {127, 0}
+   */
+module loadspROM (
+    input address[8],
+    output inst[8]
+  ) {
+  
+  const INST = $reverse({8h80,8hFF,8h0B,8h80,8h71,8h81,8h80,8h0C,8h00});
+  
+  always {
+    inst = INST[address];
+  }
+}

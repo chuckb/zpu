@@ -8,7 +8,7 @@ module instRom (
     
     case (address) {
       // Test EMULATE
-      0: inst = c{Inst.EMULATE, 0, 0, 0, 1, 0};  // Emulate instruction at offset 0x40 ((34 - 2) * 32) {1}
+      0: inst = c{Inst.EMULATE, 1, 1, 0, 1, 0};  // Emulate instruction at offset 0x40 ((34 - 2) * 32) {1}
       1: inst = c{1, 0, 0, 0, 0, 0, 0, 0};       // Immediate push 0 to stack {0}
       2: inst = Inst.BRK;                        // Stop {0}
       64: inst = c{1, 0, 0, 0, 0, 0, 1, 1};      // Immediate push 3 to stack {1, 3}
